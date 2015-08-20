@@ -1,0 +1,4 @@
+export JAVA_OPTS="-Xmx4G -XX:+UseConcMarkSweepGC -XX:+CMSClassUnloadingEnabled -Xss2M
+-Duser.timezone=GMT -Djava.net.preferIPv4Stack=true"
+
+activator

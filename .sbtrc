@@ -1,0 +1,4 @@
+alias cc=;clean;compile
+alias c=compile
+alias tc=test:compile
+alias t=test
