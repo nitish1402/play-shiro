@@ -15,31 +15,37 @@ import org.apache.shiro.codec.Base64
 import scala.util._
 
 @Singleton
-class Application @Inject() (sm: SecurityManager) extends Controller with Secure {
-
-  override implicit def securityManager: SecurityManager = sm
+class Application @Inject() (implicit val securityManager: SecurityManager) extends Controller with Secure {
 
   def index = Action(Ok("Home Page"))
 
+  def anonymous = Anonymous { implicit request =>
+    Ok(s"Anonymous User: $username")
+  }
+
+  def user = User { implicit request =>
+    Ok(s"User: $username")
+  }
+
+  def authenticated = Authenticated { implicit request =>
+    Ok(s"Authenticated User: $username")
+  }
+
+  def remembered = Remembered { implicit request =>
+    Ok(s"Remembered User: $username")
+  }
+
   def basic = BasicAuth { implicit request =>
-    Ok(s"Authenticated user: $user")
+    Ok(s"Authenticated Basic Auth User: $username")
+  }
+
+  def form = FormAuth { implicit request =>
+    Ok(s"Autenticated Form Auth User: $username")
   }
 
   def logout = Logout
 
-  def anonymous = Anonymous { implicit request =>
-    Ok(s"Anonymous user: $user")
-  }
-
-  def authenticated = Authenticated { implicit request =>
-    Ok(s"Authenticated user: $user")
-  }
-
-  def remembered = Remembered { implicit request =>
-    Ok(s"Remembered user: $user")
-  }
-
-  def user(implicit request: SubjectRequest[_]) = request.subject.principalString.getOrElse("Unknown")
+  def username(implicit request: SubjectRequest[_]) = request.subject.principalString.getOrElse("Unknown")
 
 }
 

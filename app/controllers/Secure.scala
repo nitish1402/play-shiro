@@ -15,6 +15,8 @@ trait Secure {
   val Anonymous = AnonymousAction()
   val Authenticated = Anonymous andThen AuthenticationFilter()
   val Remembered = Anonymous andThen RememberedFilter()
+  val User = Anonymous andThen UserFilter()
   val BasicAuth = Anonymous andThen BasicAuthFilter()
+  val FormAuth = Anonymous andThen FormAuthFilter()
   val Logout = LogoutAction()
 }

@@ -1,61 +1,23 @@
 package shiro
 
 import java.io.Serializable
-import javax.inject._
 
 import org.apache.shiro.authc._
 import org.apache.shiro.codec._
-import org.apache.shiro.config._
 import org.apache.shiro.mgt._
 import org.apache.shiro.session.{Session => ShiroSession}
 import org.apache.shiro.subject.Subject._
 import org.apache.shiro.subject._
-import org.apache.shiro.util._
+import play.api.Play.current
 import play.api._
-import play.api.i18n.Messages._
-import play.api.inject._
+import play.api.data.Forms._
+import play.api.data._
+import play.api.http.HeaderNames._
 import play.api.mvc.Results._
 import play.api.mvc._
-import play.api.http.HeaderNames._
-import Play.current
+
 import scala.concurrent._
 import scala.util._
-
-/**
- * Shiro components for compile time injection
- */
-trait ShiroComponents {
-
-  def environment: Environment
-  def configuration: Configuration
-  def applicationLifecycle: ApplicationLifecycle
-
-  lazy val iniSecurityManager: SecurityManager = new IniSecurityManagerProvider(configuration, environment, applicationLifecycle).get
-}
-
-@Singleton
-class ShiroModule extends Module {
-  override def bindings(environment: Environment, configuration: Configuration): Seq[Binding[_]] = Seq(
-    bind(classOf[SecurityManager]).toProvider(classOf[IniSecurityManagerProvider])
-  )
-}
-
-@Singleton
-class IniSecurityManagerProvider @Inject() (config: Configuration, env: Environment, lifecycle: ApplicationLifecycle) extends Provider[SecurityManager] {
-  override def get(): SecurityManager = {
-    val securityManager = new IniSecurityManagerFactory({
-      config.getString("shiro.inifile").getOrElse("classpath:shiro.ini")
-    }).getInstance()
-
-    // Implement shutdown hook to close resources on application shutdown
-    securityManager match {
-      case x: Destroyable => lifecycle.addStopHook(() => Future.successful(x.destroy()))
-      case x => x
-    }
-
-    securityManager
-  }
-}
 
 object Shiro {
 
@@ -68,6 +30,7 @@ object Shiro {
     def principal: Option[AnyRef] = Option(subject.getPrincipal)
     def principalString: Option[String] = principal.map(_.toString)
     def isUser = subject.isAuthenticated || subject.isRemembered
+    def isAnonymous = !isUser
     def session: Option[ShiroSession] = Option(subject.getSession(false))
     def sessionId: Option[Serializable] = session.map(_.getId)
     def sessionIdString: Option[String] = sessionId.map(_.toString)
@@ -87,7 +50,6 @@ object Shiro {
     val builder = new Builder(sm)
     SessionIdFromRequest(req).foreach(builder.sessionId)
     HostFromRequest(req).foreach(builder.host)
-    builder.sessionCreationEnabled(false)
     builder.buildSubject()
   }
 
@@ -99,6 +61,7 @@ object Shiro {
     def isAuthenticated: Boolean = subject.isAuthenticated
     def isRemembered: Boolean = subject.isRemembered
     def isUser: Boolean = subject.isUser
+    def isAnonymous: Boolean = subject.isAnonymous
   }
 
   class SubjectActionBuilder(subject: SubjectFactory)(implicit sm: SecurityManager)
@@ -160,6 +123,7 @@ object Shiro {
       authToken(request).fold(accessDenied(request)) { token =>
         Try {
           request.subject.login(token)
+          Logger(this.getClass).debug(s"Authenticated User: $token")
           authSuccess(token, request)
         } recover {
           case e: AuthenticationException => authFailure(token, request, e)
@@ -170,14 +134,16 @@ object Shiro {
   def BasicAuthFilter(
     authRealm: Option[String] = None,
     authSuccess: (AuthenticationToken, SRequest) => Option[Result] = (_,_) => None,
-    accessDenied: SRequest => Option[Result] = _ => AccessDeniedUnauthorized) = {
+    accessDenied: SRequest => Option[Result] = _ => AccessDeniedUnauthorized
+  ) = AuthenticatingFilter(BasicAuth.authToken, authSuccess, BasicAuth.authFailure(authRealm) _, accessDenied)
 
-    def authFailure(token: AuthenticationToken, request: SRequest, ex: AuthenticationException) = {
+  object BasicAuth {
+    def authFailure(authRealm: Option[String])(token: AuthenticationToken, request: SRequest, ex: AuthenticationException): Option[Result] = {
       val ChallengeHeader = WWW_AUTHENTICATE -> authRealm.fold("Basic")(r => s"""Basic realm="$r"""".trim)
-      Some(Unauthorized(ex.getMessage).withHeaders(ChallengeHeader))
+      Some(Unauthorized.withHeaders(ChallengeHeader))
     }
 
-    def authToken(request: SRequest) = {
+    def authToken(request: SRequest): Option[AuthenticationToken] = {
       def credentialsFromHeader: Option[String] = {
         request.headers.get(AUTHORIZATION).flatMap { header =>
           header.split("Basic\\s", 2) match {
@@ -200,8 +166,30 @@ object Shiro {
       } yield new UsernamePasswordToken(username, password)
 
     }
+  }
 
-    AuthenticatingFilter(authToken, authSuccess, authFailure, accessDenied)
+  def FormAuthFilter(
+    authToken: SRequest => Option[AuthenticationToken] = FormAuth.AuthToken,
+    authSuccess: (AuthenticationToken, SRequest) => Option[Result] = (_,_) => None,
+    authFailure: (AuthenticationToken, SRequest, AuthenticationException) => Option[Result] = (_,_,_) => AccessDeniedUnauthorized,
+    accessDenied: SRequest => Option[Result] = _ => AccessDeniedUnauthorized
+  ) = AuthenticatingFilter(authToken, authSuccess, authFailure, accessDenied)
+
+  object FormAuth {
+    val AuthForm = Form(
+      mapping(
+        "username" -> nonEmptyText,
+        "password" -> nonEmptyText,
+        "rememberme" -> boolean
+      )((username, password, rememberme) => new UsernamePasswordToken(username, password, rememberme))
+        (token => Some(token.getUsername, token.getPassword.mkString, token.isRememberMe))
+    )
+
+    val AuthToken: SRequest => Option[AuthenticationToken] = { implicit request =>
+      val maybeForm = AuthForm.bindFromRequest.value
+      maybeForm.foreach(_.setHost(request.remoteAddress))
+      maybeForm
+    }
   }
 
   //----------------------------------------------------------------------------------------------------
