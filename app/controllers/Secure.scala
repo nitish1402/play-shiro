@@ -1,8 +1,6 @@
 package controllers
 
 import org.apache.shiro.mgt._
-import play.api.mvc.Results._
-import play.api.http.HeaderNames._
 
 /**
  * Created by jaij on 8/17/15.
@@ -19,4 +17,5 @@ trait Secure {
   val BasicAuth = Anonymous andThen BasicAuthFilter()
   val FormAuth = Anonymous andThen FormAuthFilter()
   val Logout = LogoutAction()
+  def Authorized(tokens: AuthorizationToken*) = AuthorizationFilter(tokens)
 }

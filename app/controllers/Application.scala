@@ -40,7 +40,12 @@ class Application @Inject() (implicit val securityManager: SecurityManager) exte
   }
 
   def form = FormAuth { implicit request =>
-    Ok(s"Autenticated Form Auth User: $username")
+    Ok(s"Authenticated Form Auth User: $username")
+  }
+
+  def authorized(roles: Seq[String], permissions: Seq[String]) =
+    (Authenticated andThen Authorized(roles.map(Role) ++ permissions.map(Permission): _*)) { implicit request =>
+    Ok(s"Authorized (by Role) User: $username")
   }
 
   def logout = Logout

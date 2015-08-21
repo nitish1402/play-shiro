@@ -18,6 +18,7 @@ import play.api.mvc._
 
 import scala.concurrent._
 import scala.util._
+import scala.collection.JavaConversions._
 
 object Shiro {
 
@@ -69,18 +70,19 @@ object Shiro {
     with ActionFunction[Request, SubjectRequest] {
 
     override def invokeBlock[A](request: Request[A], block: (SubjectRequest[A]) => Future[Result]): Future[Result] = {
-      val s = subject(sm, request)
-      block(new SubjectRequest(s, request)).map { r =>
-        s.sessionIdString.fold(r)(id => r.withSession(request.session + (SessionId -> id)))
-      }(executionContext)
+      val srequest = new SubjectRequest(subject(sm, request), request)
+      block(srequest).map(result => writeSessionId(srequest, result))(executionContext)
     }
+
+    protected def writeSessionId(request: SRequest, result: Result) =
+      request.subject.sessionIdString.fold(result)(id => result.withSession(request.session + (SessionId -> id)))
   }
 
   def AnonymousAction(subject: SubjectFactory = SubjectFromRequest)(implicit sm: SecurityManager): ActionBuilder[SubjectRequest] =
     new SubjectActionBuilder(subject)
 
   //----------------------------------------------------------------------------------------------------
-  // ActionFilters that restrict access to Controllers
+  // ActionFilters that restrict access to logged in users
   //----------------------------------------------------------------------------------------------------
   class AccessControlFilter(accessAllowed: SRequest => Boolean, accessDenied: SRequest => Option[Result])
     extends ActionFilter[SubjectRequest] {
@@ -176,7 +178,7 @@ object Shiro {
   ) = AuthenticatingFilter(authToken, authSuccess, authFailure, accessDenied)
 
   object FormAuth {
-    val AuthForm = Form(
+    val SimpleUserForm = Form(
       mapping(
         "username" -> nonEmptyText,
         "password" -> nonEmptyText,
@@ -186,11 +188,31 @@ object Shiro {
     )
 
     val AuthToken: SRequest => Option[AuthenticationToken] = { implicit request =>
-      val maybeForm = AuthForm.bindFromRequest.value
+      val maybeForm = SimpleUserForm.bindFromRequest.value
       maybeForm.foreach(_.setHost(request.remoteAddress))
       maybeForm
     }
   }
+
+  //----------------------------------------------------------------------------------------------------
+  // ActionFilters that restrict access to users by role/permission
+  //----------------------------------------------------------------------------------------------------
+  sealed trait AuthorizationToken extends Any {
+    def name: String
+    def isRole: Boolean = this.isInstanceOf[Role]
+    def isPermission: Boolean = this.isInstanceOf[Permission]
+  }
+
+  case class Role(name: String) extends AnyVal with AuthorizationToken
+  case class Permission(name: String) extends AnyVal with AuthorizationToken
+
+  def AuthorizationFilter(
+    tokens: Seq[AuthorizationToken] = Seq.empty,
+    accessDenied: SRequest => Option[Result] = _ => AccessDeniedForbidden) = new AccessControlFilter({ req =>
+      val subj = req.subject
+      val (roles, permissions) = tokens.partition(_.isRole)
+      subj.hasAllRoles(roles.map(_.name)) && subj.isPermittedAll(permissions.map(_.name): _*)
+    }, accessDenied)
 
   //----------------------------------------------------------------------------------------------------
   // Other Filters
