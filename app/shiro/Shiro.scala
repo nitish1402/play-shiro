@@ -37,20 +37,27 @@ object Shiro {
     def sessionIdString: Option[String] = sessionId.map(_.toString)
   }
 
-  type SubjectFactory = (SecurityManager, RequestHeader) => Subject
+  type SubjectFactory = (SecurityManager, RequestHeader, Boolean, Boolean, PrincipalCollection) => Subject
   type SRequest = SubjectRequest[_]
 
   val SessionId = Play.configuration.getString("shiro.sessionid").getOrElse("sessionid")
   val HostFromRequest: RequestHeader => Option[String] = req => Option(req.remoteAddress)
   val SessionIdFromRequest: RequestHeader => Option[String] = _.session.get(SessionId)
+
   val AccessDeniedUnauthorized = Some(Unauthorized)
   val AccessDeniedForbidden = Some(Forbidden)
+
   val RedirectHome = Redirect("/")
 
-  val SubjectFromRequest: SubjectFactory = { (sm, req) =>
+  lazy val NoPrincipals = new SimplePrincipalCollection()
+
+  val SubjectFromRequest: SubjectFactory = { (sm, req, sessionCreation, authenticated, principals) =>
     val builder = new Builder(sm)
     SessionIdFromRequest(req).foreach(builder.sessionId)
     HostFromRequest(req).foreach(builder.host)
+    builder.sessionCreationEnabled(sessionCreation)
+    builder.authenticated(authenticated)
+    builder.principals(principals)
     builder.buildSubject()
   }
 
@@ -65,12 +72,16 @@ object Shiro {
     def isAnonymous: Boolean = subject.isAnonymous
   }
 
-  class SubjectActionBuilder(subject: SubjectFactory)(implicit sm: SecurityManager)
+  class SubjectActionBuilder(subject: SubjectFactory,
+    sessionCreation: Boolean,
+    authenticated: Boolean,
+    principals: PrincipalCollection)
+    (implicit sm: SecurityManager)
     extends ActionBuilder[SubjectRequest]
     with ActionFunction[Request, SubjectRequest] {
 
     override def invokeBlock[A](request: Request[A], block: (SubjectRequest[A]) => Future[Result]): Future[Result] = {
-      val srequest = new SubjectRequest(subject(sm, request), request)
+      val srequest = new SubjectRequest(subject(sm, request, sessionCreation, authenticated, principals), request)
       block(srequest).map(result => writeSessionId(srequest, result))(executionContext)
     }
 
@@ -78,8 +89,12 @@ object Shiro {
       request.subject.sessionIdString.fold(result)(id => result.withSession(request.session + (SessionId -> id)))
   }
 
-  def AnonymousAction(subject: SubjectFactory = SubjectFromRequest)(implicit sm: SecurityManager): ActionBuilder[SubjectRequest] =
-    new SubjectActionBuilder(subject)
+  def AnonymousAction(subject: SubjectFactory = SubjectFromRequest,
+    sessionCreation: Boolean = true,
+    authenticated: Boolean = false,
+    principals: PrincipalCollection = NoPrincipals)
+    (implicit sm: SecurityManager): ActionBuilder[SubjectRequest] =
+    new SubjectActionBuilder(subject, sessionCreation, authenticated, principals)
 
   //----------------------------------------------------------------------------------------------------
   // ActionFilters that restrict access to logged in users
