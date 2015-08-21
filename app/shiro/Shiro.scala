@@ -202,7 +202,6 @@ object Shiro {
     def isRole: Boolean = this.isInstanceOf[Role]
     def isPermission: Boolean = this.isInstanceOf[Permission]
   }
-
   case class Role(name: String) extends AnyVal with AuthorizationToken
   case class Permission(name: String) extends AnyVal with AuthorizationToken
 

@@ -15,7 +15,7 @@ import org.apache.shiro.codec.Base64
 import scala.util._
 
 @Singleton
-class Application @Inject() (implicit val securityManager: SecurityManager) extends Controller with Secure {
+class Application @Inject() (implicit val securityManager: SecurityManager) extends Controller with Security {
 
   def index = Action(Ok("Home Page"))
 
@@ -44,8 +44,8 @@ class Application @Inject() (implicit val securityManager: SecurityManager) exte
   }
 
   def authorized(roles: Seq[String], permissions: Seq[String]) =
-    (Authenticated andThen Authorized(roles.map(Role) ++ permissions.map(Permission): _*)) { implicit request =>
-    Ok(s"Authorized (by Role) User: $username")
+    Authorized(roles.map(Role) ++ permissions.map(Permission): _*) { implicit request =>
+    Ok(s"Authorized User: $username")
   }
 
   def logout = Logout
